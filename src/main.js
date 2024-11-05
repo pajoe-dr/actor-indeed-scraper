@@ -158,10 +158,10 @@ Apify.main(async () => {
                     if (!(maxItems && itemsCounter >= maxItems)) {
                         let result = {
                             positionName: $('.jobsearch-JobInfoHeader-title').text().trim(),
-                            salary: $('#salaryInfoAndJobType .attribute_snippet').text().trim() || null,
+                            salary: $('#salaryInfoAndJobType .attribute_snippet').text().trim(),
                             jobType: $('#salaryInfoAndJobType .jobsearch-JobType').text().trim() || null,
                             company: $('meta[property="og:description"]').attr('content'),
-                            location: $('.jobsearch-JobInfoHeader-subtitle > div').eq(1).text().trim() || null,
+                            location: $('.jobsearch-JobInfoHeader-subtitle > div').eq(1).text().trim(),
                             rating: $('meta[itemprop="ratingValue"]').attr('content') ? Number($('meta[itemprop="ratingValue"]').attr('content')) : null,
                             reviewsCount: $('meta[itemprop="ratingCount"]').attr('content') ? Number($('meta[itemprop="ratingCount"]').attr('content')) : null,
                             url: request.url,
