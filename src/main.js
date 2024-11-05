@@ -22,6 +22,7 @@ Apify.main(async () => {
 
     let { maxItems } = input;
     maxItems = checkMaxItemsInput(maxItems);
+    
     // COUNTER OF ITEMS TO SAVE
     let itemsCounter = 0;
     let currentPageNumber = 1;
@@ -43,7 +44,6 @@ Apify.main(async () => {
     await buildStartUrl({ requestQueue, position, location, country, startUrls, currentPageNumber });
 
     const sdkProxyConfiguration = await Apify.createProxyConfiguration(proxyConfiguration);
-    // You must use proxy on the platform
     if (Apify.getEnv().isAtHome && !sdkProxyConfiguration) {
         throw 'You must use Apify Proxy or custom proxies to run this scraper on the platform!';
     }
@@ -59,7 +59,7 @@ Apify.main(async () => {
             },
         },
         maxConcurrency,
-        maxRequestRetries: 10, // a lot of 403 blocks at the beginning of the run
+        maxRequestRetries: 10,
         proxyConfiguration: sdkProxyConfiguration,
         handlePageFunction: async ({ $, request, session, response }) => {
             log.info(`Label(Page type): ${request.userData.label} || URL: ${request.url}`);
@@ -98,16 +98,14 @@ Apify.main(async () => {
                     });
 
                     for (const req of details) {
-                        // rarely LIST page doesn't load properly (items without href) => check for undefined
+                        // Check the item count before adding to the request queue
                         if (!(maxItems && itemsCounter >= maxItems) && itemsCounter < 990 && !req.url.includes('undefined')) {
                             await requestQueue.addRequest(req, { forefront: true });
                         }
                     }
 
-                    // getting total number of items, that the website shows.
-                    // We need it for additional check. Without it, on the last "list" page it tries to enqueue next (non-existing) list page.
+                    // Getting total number of items shown on the site.
                     let maxItemsOnSite;
-                    // from time to time they return different structure of the element => trying to catch it. If no, retrying.
                     try {
                         maxItemsOnSite = $('#searchCountPages')
                             .html()
@@ -124,17 +122,17 @@ Apify.main(async () => {
                                     .split(' ')[0]
                                     .replace(/[^0-9]/g, ''));
                     } catch (error) {
-                        throw ('Page didn\'t load properly. Retrying...'); //NOTE: or maybe we can just skip, as we process each LIST page 5 times.
+                        throw ('Page didn\'t load properly. Retrying...');
                     }
 
                     currentPageNumber++;
                     const hasNextPage = $(`a[aria-label="${currentPageNumber}"]`).length > 0;
 
-                    if (!(maxItems && itemsCounter > maxItems) && itemsCounter < 990 && itemsCounter < maxItemsOnSite && hasNextPage) {
+                    // Avoid enqueueing next page if max items reached
+                    if (!(maxItems && itemsCounter >= maxItems) && itemsCounter < 990 && itemsCounter < maxItemsOnSite && hasNextPage) {
                         const nextPage = $(`a[aria-label="${currentPageNumber}"]`).attr('href');
                         const urlParsed = urlParse(request.url);
 
-                        // Indeed has  inconsistent order of items on LIST pages, that is why there are a lot of duplicates. To get all unique items, we enqueue each LIST page 5 times
                         for (let i = 0; i < 5; i++) {
                             const nextPageUrl = {
                                 url: makeUrlFull(nextPage, urlParsed),
@@ -153,18 +151,17 @@ Apify.main(async () => {
                         log.warning(`Got 404 status code. Job offer no longer available. Skipping. | URL: ${request.url}`);
                         return;
                     } else if ($('meta[id="indeed-share-url"]').length === 0) {
-                        // rarely they return totally different page (possibly direct offer page on company's website)
                         log.warning(`Invalid job offer page. Skipping. | URL: ${request.url}`);
                         return;
                     }
 
-                    if (!(maxItems && itemsCounter > maxItems)) {
+                    if (!(maxItems && itemsCounter >= maxItems)) {
                         let result = {
                             positionName: $('.jobsearch-JobInfoHeader-title').text().trim(),
-                            salary: $('#salaryInfoAndJobType .attribute_snippet').text() !== '' ? $('#salaryInfoAndJobType .attribute_snippet').text().trim() : null,
-                            jobType: $('#salaryInfoAndJobType .jobsearch-JobInfoHeader-title').text().trim(), // Assuming job type is part of the title
+                            salary: $('#salaryInfoAndJobType .attribute_snippet').text().trim() || null,
+                            jobType: $('#salaryInfoAndJobType .jobsearch-JobType').text().trim() || null,
                             company: $('meta[property="og:description"]').attr('content'),
-                            location: $('.jobsearch-JobInfoHeader-subtitle > div').eq(1).text().trim(),
+                            location: $('.jobsearch-JobInfoHeader-subtitle > div').eq(1).text().trim() || null,
                             rating: $('meta[itemprop="ratingValue"]').attr('content') ? Number($('meta[itemprop="ratingValue"]').attr('content')) : null,
                             reviewsCount: $('meta[itemprop="ratingCount"]').attr('content') ? Number($('meta[itemprop="ratingCount"]').attr('content')) : null,
                             url: request.url,
@@ -175,6 +172,13 @@ Apify.main(async () => {
                             externalApplyLink: $('#applyButtonLinkContainer a')[0] ? $($('#applyButtonLinkContainer a')[0]).attr('href') : null,
                         };
 
+                        // Logging the output data for debugging
+                        log.info(`Salary: ${result.salary}`);
+                        log.info(`Job Type: ${result.jobType}`);
+                        log.info(`Location: ${result.location}`);
+                        log.info(`Rating: ${result.rating}`);
+                        log.info(`Reviews Count: ${result.reviewsCount}`);
+
                         if (extendOutputFunction) {
                             try {
                                 const userResult = await extendOutputFunctionValid($);
@@ -183,8 +187,15 @@ Apify.main(async () => {
                                 log.info('Error in the extendedOutputFunction run', e);
                             }
                         }
+
                         await Apify.pushData(result);
                         itemsCounter += 1;
+
+                        // Check to stop processing after reaching max items
+                        if (itemsCounter >= maxItems) {
+                            log.info(`Reached maximum items limit of ${maxItems}. Stopping the crawler.`);
+                            await crawler.autostop(); // This will stop the crawler if it has reached the maximum item limit.
+                        }
                     }
                     break;
                 default:
@@ -192,6 +203,7 @@ Apify.main(async () => {
             }
         }
     });
+
     await crawler.run();
     log.info('Done.');
 });
